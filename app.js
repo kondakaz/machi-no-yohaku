@@ -1,9 +1,9 @@
 'use strict';
 const S=window.BusSim,$=id=>document.getElementById(id),esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let mode='B',state,timeline,timer=null,beforePlan=null;const node=id=>S.nodes.find(n=>n.id===id),name=id=>node(id)?.name??id;const fmt=t=>`${String(9+Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;
-function stop(){clearInterval(timer);timer=null;$('play').textContent='▶ 再生'}
-function reset(){stop();beforePlan=null;timeline=window.BusTimeline.create(Number($('seed').value)||42,mode);state=timeline.state;$('comparison').hidden=true;$('reservationNotice').textContent='「9:40の実演へ」→ 公園から病院を予約 → 再生。追加予約は登録者の集計に加わります。';$('notice').textContent='再生して滞在が始まると、「あと30分」を試せます。';render()}
-function advance(n){state=timeline.advance(n);if(state.time>=180)stop();render()}
+let mode='B',state,timeline,timer=null,beforePlan=null,bookingId=null,followingRide=false;const node=id=>S.nodes.find(n=>n.id===id),name=id=>node(id)?.name??id;const fmt=t=>`${String(9+Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;
+function stop(){clearInterval(timer);timer=null;followingRide=false;$('play').textContent='▶ 再生'}
+function reset(){stop();beforePlan=null;bookingId=null;timeline=window.BusTimeline.create(Number($('seed').value)||42,mode);state=timeline.state;$('comparison').hidden=true;$('reservationNotice').textContent='「9:40の実演へ」→ 公園から病院を予約 → 再生。追加予約は登録者の集計に加わります。';$('notice').textContent='再生して滞在が始まると、「あと30分」を試せます。';render()}
+function advance(n){state=timeline.advance(n);if(state.time>=180||followingRide&&state.people.some(p=>p.id===bookingId&&['done','missed'].includes(p.status)))stop();render()}
 function seek(minute){stop();beforePlan=null;state=timeline.seek(minute);render()}
 function renderMap(){
 const future=timeline.preview(15),past=timeline.past(15);
@@ -25,7 +25,21 @@ function render(){const m=S.metrics(state),registeredTotal=state.people.filter(p
 $('stats').innerHTML=[['登録者の予定達成',m.registered,`/ ${registeredTotal}人`,registeredTotal],['未予約者の移動達成',m.walkin,'/ 5人',5],['総走行距離',Number(m.distance).toFixed(1),'km',false]].map(([label,v,unit,bar])=>`<div class="stat"><div class="stat-label">${label}</div><div class="stat-value"><b>${v}</b><span>${unit}${bar?` · ${Math.round(Number(v)/bar*100)}%`:''}</span></div>${bar?`<div class="bar"><div style="width:${Math.round(Number(v)/bar*100)}%"></div></div>`:''}</div>`).join('');
 $('busCards').innerHTML=state.buses.map((b,i)=>`<div class="bus-card"><b style="color:${i?'#557daf':'#287959'}">● バス${i+1}</b>${b.onboard.length} / 4席<br>${b.edge?`${esc(name(b.edge.from))} → ${esc(name(b.edge.to))}`:`${esc(name(b.node))} に停車`}<br><span class="muted" style="margin:0">次の経由地：${(b.route||[]).slice(0,4).map(x=>esc(name(x))).join(' → ')||'待機'}</span></div>`).join('');
 $('logs').innerHTML=state.logs.slice(-8).reverse().map(l=>`<div>${esc(typeof l==='string'?l.replace(/^\[(\d+)\]/,(_,t)=>fmt(Number(t))):JSON.stringify(l))}</div>`).join('')||'<div>再生すると運行記録がここに表示されます。</div>';
-$('people').innerHTML=state.people.filter(p=>p.kind==='registered').map(p=>`<article class="person"><h3>${esc(p.name||p.id)}</h3><span class="status">${p.unassigned&&['pending','waiting','staying'].includes(p.status)?'未割当':statuses[p.status]||esc(p.status)}</span><p>${(p.oneWay?[p.origin,p.destination]:[p.origin,...p.visits,p.origin]).map(x=>esc(name(x))).join(' → ')}</p><div>${p.oneWay?'到着期限':'帰着期限'} ${fmt(p.deadline)}</div><div>${p.status==='staying'?`次の出発可能 ${fmt(p.readyAt)}`:`現在地 ${esc(p.status==='onboard'?'車内':name(p.node))}`}</div><button data-extend="${esc(p.id)}" ${p.status!=='staying'||state.time>=180?'disabled':''}>あと30分</button></article>`).join('');$('walkins').innerHTML=state.people.filter(p=>p.kind==='walkin').map(p=>`<div class="walkin"><b>${esc(p.name)}</b><span>${p.status==='pending'?'まだ発生していません':`${esc(name(p.origin))} → ${esc(name(p.destination))}`}</span><span class="status">${p.unassigned&&['pending','waiting','staying'].includes(p.status)?'未割当':statuses[p.status]||esc(p.status)}</span></div>`).join('');renderMap()}
+$('people').innerHTML=state.people.filter(p=>p.kind==='registered').map(p=>`<article class="person"><h3>${esc(p.name||p.id)}</h3><span class="status">${p.unassigned&&['pending','waiting','staying'].includes(p.status)?'未割当':statuses[p.status]||esc(p.status)}</span><p>${(p.oneWay?[p.origin,p.destination]:[p.origin,...p.visits,p.origin]).map(x=>esc(name(x))).join(' → ')}</p><div>${p.oneWay?'到着期限':'帰着期限'} ${fmt(p.deadline)}</div><div>${p.status==='staying'?`次の出発可能 ${fmt(p.readyAt)}`:`現在地 ${esc(p.status==='onboard'?'車内':name(p.node))}`}</div><button data-extend="${esc(p.id)}" ${p.status!=='staying'||state.time>=180?'disabled':''}>あと30分</button></article>`).join('');$('walkins').innerHTML=state.people.filter(p=>p.kind==='walkin').map(p=>`<div class="walkin"><b>${esc(p.name)}</b><span>${p.status==='pending'?'まだ発生していません':`${esc(name(p.origin))} → ${esc(name(p.destination))}`}</span><span class="status">${p.unassigned&&['pending','waiting','staying'].includes(p.status)?'未割当':statuses[p.status]||esc(p.status)}</span></div>`).join('');renderMap();renderRide()}
+function renderRide(){
+$('phoneClock').textContent=fmt(state.time);
+const p=state.people.find(p=>p.id===bookingId);
+$('rideProgress').hidden=!p;$('rideFollow').hidden=!p||['done','missed'].includes(p.status)||state.time>=180;
+if(!p)return;
+const prediction=timeline.preview(180-state.time);
+const pickup=prediction.find(s=>s.people.find(q=>q.id===p.id)?.status==='onboard');
+const arrival=prediction.find(s=>s.people.find(q=>q.id===p.id)?.status==='done');
+const bus=state.buses.find(b=>b.onboard.includes(p.id))||pickup?.buses.find(b=>b.onboard.includes(p.id));
+const title={pending:'迎えの便を調整しています',waiting:'停留所でお待ちください',onboard:'目的地へ向かっています',done:'目的地に到着しました',missed:'今回は配車できませんでした'}[p.status];
+const eta=p.status==='done'?`到着 ${fmt(p.completedAt)}`:p.status==='onboard'?(arrival?`到着予定 ${fmt(arrival.time)}`:'到着予定を再計算中'):(pickup?`迎え予定 ${fmt(pickup.time)}`:'迎え時刻は未確定');
+$('rideProgress').innerHTML=`<b>${esc(title||'予約受付済み')}</b><span class="ride-eta">${eta}</span><p>${esc(name(p.origin))} → ${esc(name(p.destination))}<br>${bus?`バス${state.buses.findIndex(b=>b.id===bus.id)+1} / `:''}${esc(p.name)}・${statuses[p.status]}</p><small>現在の予約から計算した目安です。運行状況で変わります。</small>`;
+}
+$('rideFollow').onclick=()=>{if(timer){stop();return;} $('speed').value='1';$('play').click();followingRide=true;};
 $('people').addEventListener('click',e=>{const b=e.target.closest('[data-extend]');if(!b)return;stop();beforePlan=timeline.preview();const r=timeline.extend(b.dataset.extend);state=timeline.state;$('notice').textContent=r.message+(r.ok?'。この時刻から先の運行を再計算します。':'');render()});
 $('play').onclick=()=>{if(timer)return stop();$('play').textContent='Ⅱ 一時停止';timer=setInterval(()=>advance(Number($('speed').value)),180)};$('step').onclick=()=>{stop();advance(10)};$('reset').onclick=reset;$('modeA').onclick=()=>{mode='A';reset()};$('modeB').onclick=()=>{mode='B';reset()};
 $('compare').onclick=()=>{stop();const seed=Number($('seed').value)||42;const a=S.create(seed,'A'),b=S.create(seed,'B');for(let i=0;i<180;i++){S.step(a);S.step(b)}const am=S.metrics(a),bm=S.metrics(b);const c=$('comparison');c.hidden=false;c.innerHTML=`<div class="panel-head"><b>同じ条件、2つの運行。</b><span class="tag">シード ${seed} / 追加予約・予定変更なし / 12:00</span></div><table><thead><tr><th>評価指標</th><th>A 予定のみ</th><th>B ＋需要予測</th></tr></thead><tbody><tr><td>登録者の予定達成率</td><td>${am.registered*20}%（${am.registered}/5人）</td><td>${bm.registered*20}%（${bm.registered}/5人）</td></tr><tr><td>未予約者の移動達成率</td><td>${am.walkin*20}%（${am.walkin}/5人）</td><td>${bm.walkin*20}%（${bm.walkin}/5人）</td></tr><tr><td>総走行距離</td><td>${Number(am.distance).toFixed(1)} km</td><td>${Number(bm.distance).toFixed(1)} km</td></tr>${S.nodes.map(n=>`<tr><td>${esc(n.name)} 発の未予約・未達人数</td><td>${am.unmet[n.name]??am.unmet[n.id]??0}人</td><td>${bm.unmet[n.name]??bm.unmet[n.id]??0}人</td></tr>`).join('')}</tbody></table><p class="note">B−A：未予約の到着 ${bm.walkin-am.walkin>=0?'+':''}${bm.walkin-am.walkin}人 / 走行距離 ${(bm.distance-am.distance).toFixed(1)} km。現在の地図は比較実行前の状態を保持しています。未達人数には終了時点の乗車中・待機中・未発生を含みます。</p>`;c.scrollIntoView({behavior:'smooth',block:'start'})};
@@ -36,7 +50,7 @@ $('demoSetup').onclick=()=>{mode='B';$('seed').value=42;reset();seek(40);$('rese
 $('reservationForm').onsubmit=e=>{
 e.preventDefault();stop();const previous=timeline.preview();
 const result=timeline.reserve({origin:$('reserveOrigin').value,destination:$('reserveDestination').value,readyAt:state.time+3,deadline:180});
-state=timeline.state;if(result.ok)beforePlan=previous;
+state=timeline.state;if(result.ok){beforePlan=previous;bookingId=result.id;}
 $('reservationNotice').textContent=result.message+(result.ok?'。灰色が予約前、色付き破線が予約後の予定です。再生して迎えを確認してください。':'');render();
 };
 $('timeSlider').addEventListener('input',e=>seek(e.target.value));
