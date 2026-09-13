@@ -22,3 +22,20 @@ assert.equal(S.addReservation(invalid,{origin:'park',destination:'park',readyAt:
 assert.equal(S.addReservation(invalid,{origin:'park',destination:'hospital',readyAt:175,deadline:180}).ok,false);
 assert.deepEqual(invalid,untouched);
 console.log('Reservation tests passed: plan change, no future leakage, physical boarding/arrival, replay, validation');
+// A requested later pickup must affect dispatch and never board before that time.
+const later=T.create(42,'B');later.seek(40);
+const laterResult=later.reserve({origin:'park',destination:'hospital',readyAt:70,deadline:180});
+assert.equal(laterResult.ok,true);
+for(let minute=41;minute<70;minute++){
+  later.seek(minute);
+  assert.equal(later.state.people.find(p=>p.id===laterResult.id).status,'pending');
+  assert.ok(later.state.buses.every(b=>!b.onboard.includes(laterResult.id)));
+}
+later.seek(180);
+const laterPassenger=later.state.people.find(p=>p.id===laterResult.id);
+assert.equal(laterPassenger.status,'done');assert.ok(laterPassenger.boardedAt>=70);
+const past=T.create(42,'B');past.seek(40);
+const unchanged=structuredClone(past.state);
+assert.equal(past.reserve({origin:'park',destination:'hospital',readyAt:39,deadline:180}).ok,false);
+assert.deepEqual(past.state,unchanged);
+console.log('Requested pickup time tests passed: later pickup, no early boarding, past time rejected');

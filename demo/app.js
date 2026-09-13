@@ -1,8 +1,8 @@
 'use strict';
 const S=window.BusSim,$=id=>document.getElementById(id),esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let mode='B',state,timeline,timer=null,beforePlan=null,bookingId=null,followingRide=false;const node=id=>S.nodes.find(n=>n.id===id),name=id=>node(id)?.name??id;const fmt=t=>`${String(9+Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;
+let mode='B',state,timeline,timer=null,beforePlan=null,bookingId=null,followingRide=false,pickupTimeEdited=false;const node=id=>S.nodes.find(n=>n.id===id),name=id=>node(id)?.name??id;const fmt=t=>`${String(9+Math.floor(t/60)).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;
 function stop(){clearInterval(timer);timer=null;followingRide=false;$('play').textContent='▶ 再生'}
-function reset(){stop();beforePlan=null;bookingId=null;timeline=window.BusTimeline.create(Number($('seed').value)||42,mode);state=timeline.state;$('comparison').hidden=true;$('reservationNotice').textContent='「9:40の実演へ」→ 公園から病院を予約 → 再生。追加予約は登録者の集計に加わります。';$('notice').textContent='再生して滞在が始まると、「あと30分」を試せます。';render()}
+function reset(){stop();beforePlan=null;bookingId=null;pickupTimeEdited=false;timeline=window.BusTimeline.create(Number($('seed').value)||42,mode);state=timeline.state;$('comparison').hidden=true;$('reservationNotice').textContent='「9:40の実演へ」→ 公園から病院を予約 → 再生。追加予約は登録者の集計に加わります。';$('notice').textContent='再生して滞在が始まると、「あと30分」を試せます。';render()}
 function advance(n){state=timeline.advance(n);if(state.time>=180||followingRide&&state.people.some(p=>p.id===bookingId&&['done','missed'].includes(p.status)))stop();render()}
 function seek(minute){stop();beforePlan=null;state=timeline.seek(minute);render()}
 function renderMap(){
@@ -28,6 +28,10 @@ $('logs').innerHTML=state.logs.slice(-8).reverse().map(l=>`<div>${esc(typeof l==
 $('people').innerHTML=state.people.filter(p=>p.kind==='registered').map(p=>`<article class="person"><h3>${esc(p.name||p.id)}</h3><span class="status">${p.unassigned&&['pending','waiting','staying'].includes(p.status)?'未割当':statuses[p.status]||esc(p.status)}</span><p>${(p.oneWay?[p.origin,p.destination]:[p.origin,...p.visits,p.origin]).map(x=>esc(name(x))).join(' → ')}</p><div>${p.oneWay?'到着期限':'帰着期限'} ${fmt(p.deadline)}</div><div>${p.status==='staying'?`次の出発可能 ${fmt(p.readyAt)}`:`現在地 ${esc(p.status==='onboard'?'車内':name(p.node))}`}</div><button data-extend="${esc(p.id)}" ${p.status!=='staying'||state.time>=180?'disabled':''}>あと30分</button></article>`).join('');$('walkins').innerHTML=state.people.filter(p=>p.kind==='walkin').map(p=>`<div class="walkin"><b>${esc(p.name)}</b><span>${p.status==='pending'?'まだ発生していません':`${esc(name(p.origin))} → ${esc(name(p.destination))}`}</span><span class="status">${p.unassigned&&['pending','waiting','staying'].includes(p.status)?'未割当':statuses[p.status]||esc(p.status)}</span></div>`).join('');renderMap();renderRide()}
 function renderRide(){
 $('phoneClock').textContent=fmt(state.time);
+$('reserveTime').min=fmt(Math.min(180,state.time+1));
+if(!pickupTimeEdited)$('reserveTime').value=fmt(Math.min(179,state.time+3));
+$('reservationSubmit').disabled=state.time>=179;
+
 const p=state.people.find(p=>p.id===bookingId);
 $('rideProgress').hidden=!p;$('rideFollow').hidden=!p||['done','missed'].includes(p.status)||state.time>=180;
 if(!p)return;
@@ -37,7 +41,7 @@ const arrival=prediction.find(s=>s.people.find(q=>q.id===p.id)?.status==='done')
 const bus=state.buses.find(b=>b.onboard.includes(p.id))||pickup?.buses.find(b=>b.onboard.includes(p.id));
 const title={pending:'迎えの便を調整しています',waiting:'停留所でお待ちください',onboard:'目的地へ向かっています',done:'目的地に到着しました',missed:'今回は配車できませんでした'}[p.status];
 const eta=p.status==='done'?`到着 ${fmt(p.completedAt)}`:p.status==='onboard'?(arrival?`到着予定 ${fmt(arrival.time)}`:'到着予定を再計算中'):(pickup?`迎え予定 ${fmt(pickup.time)}`:'迎え時刻は未確定');
-$('rideProgress').innerHTML=`<b>${esc(title||'予約受付済み')}</b><span class="ride-eta">${eta}</span><p>${esc(name(p.origin))} → ${esc(name(p.destination))}<br>${bus?`バス${state.buses.findIndex(b=>b.id===bus.id)+1} / `:''}${esc(p.name)}・${statuses[p.status]}</p><small>現在の予約から計算した目安です。運行状況で変わります。</small>`;
+$('rideProgress').innerHTML=`<b>${esc(title||'予約受付済み')}</b><span class="ride-eta">${eta}</span><p>${esc(name(p.origin))} → ${esc(name(p.destination))}<br>希望時刻 ${fmt(p.readyAt)} 以降<br>${bus?`バス${state.buses.findIndex(b=>b.id===bus.id)+1} / `:''}${esc(p.name)}・${statuses[p.status]}</p><small>現在の予約から計算した目安です。運行状況で変わります。</small>`;
 }
 $('rideFollow').onclick=()=>{if(timer){stop();return;} $('speed').value='1';$('play').click();followingRide=true;};
 $('people').addEventListener('click',e=>{const b=e.target.closest('[data-extend]');if(!b)return;stop();beforePlan=timeline.preview();const r=timeline.extend(b.dataset.extend);state=timeline.state;$('notice').textContent=r.message+(r.ok?'。この時刻から先の運行を再計算します。':'');render()});
@@ -47,9 +51,11 @@ $('reserveOrigin').innerHTML=S.nodes.map(n=>`<option value="${n.id}">${esc(n.nam
 $('reserveDestination').innerHTML=$('reserveOrigin').innerHTML;
 $('reserveOrigin').value='park';$('reserveDestination').value='hospital';
 $('demoSetup').onclick=()=>{mode='B';$('seed').value=42;reset();seek(40);$('reserveOrigin').value='park';$('reserveDestination').value='hospital';$('reservationNotice').textContent='9:40にセットしました。色付き破線を見てから「この移動を予約」を押すと、変更前の予定を灰色で残して比較できます。';};
+function parsePickupTime(value){const match=/^(\d{2}):(\d{2})$/.exec(value);return match?Number(match[1])*60+Number(match[2])-540:NaN;}
+$('reserveTime').addEventListener('input',()=>{pickupTimeEdited=true;});
 $('reservationForm').onsubmit=e=>{
 e.preventDefault();stop();const previous=timeline.preview();
-const result=timeline.reserve({origin:$('reserveOrigin').value,destination:$('reserveDestination').value,readyAt:state.time+3,deadline:180});
+const result=timeline.reserve({origin:$('reserveOrigin').value,destination:$('reserveDestination').value,readyAt:parsePickupTime($('reserveTime').value),deadline:180});
 state=timeline.state;if(result.ok){beforePlan=previous;bookingId=result.id;}
 $('reservationNotice').textContent=result.message+(result.ok?'。灰色が予約前、色付き破線が予約後の予定です。再生して迎えを確認してください。':'');render();
 };
