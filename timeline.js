@@ -22,7 +22,22 @@
       if(result.ok){history.length=state.time+1;history[state.time]=structuredClone(state);}
       return result;
     }
-    return {get state(){return state},seek,advance(n){return seek(state.time+n)},extend};
+    function reserve(request){
+      const result=S.addReservation(state,request);
+      if(result.ok){history.length=state.time+1;history[state.time]=structuredClone(state);}
+      return result;
+    }
+    function preview(minutes=15){
+      const projected=structuredClone(state);
+      // The plan knows onboard riders, never unobserved waiting or future walk-ins.
+      projected.people=projected.people.filter(p=>p.kind!=='walkin'||p.status==='onboard');
+      const result=[structuredClone(projected)];
+      const end=Math.min(180,state.time+minutes);
+      while(projected.time<end){S.step(projected);result.push(structuredClone(projected));}
+      return result;
+    }
+    function past(minutes=15){return history.slice(Math.max(0,state.time-minutes),state.time+1).map(s=>structuredClone(s));}
+    return {get state(){return state},seek,advance(n){return seek(state.time+n)},extend,reserve,preview,past};
   }
   return {create};
 });

@@ -46,7 +46,7 @@
   }
   function legMinutes(a, b) { return path(a, b).minutes; }
   function personDestination(p) {
-    if (p.kind === 'walkin') return p.destination;
+    if (p.kind === 'walkin' || p.oneWay) return p.destination;
     return p.returning ? p.origin : p.visits[p.visitIndex];
   }
   function log(s, text) { s.logs.push('[' + String(s.time).padStart(3, '0') + '] ' + text); }
@@ -189,7 +189,7 @@
       var p = personById(s, id);
       if (p && personDestination(p) === b.node) {
         b.onboard.splice(b.onboard.indexOf(id), 1); p.node = b.node;
-        if (p.kind === 'walkin') { p.completedVisits.push(b.node); p.status = s.time <= 180 ? 'done' : 'missed'; if (p.status === 'done') p.completedAt = s.time; log(s, p.name + (p.status === 'done' ? ' が目的地に到着' : ' が12時超過')); }
+        if (p.kind === 'walkin' || p.oneWay) { p.completedVisits.push(b.node); p.status = s.time <= 180 && (p.kind === 'walkin' || s.time <= p.deadline) ? 'done' : 'missed'; if (p.status === 'done') p.completedAt = s.time; log(s, p.name + (p.status === 'done' ? ' が目的地に到着' : ' が12時超過')); }
         else if (!p.returning) {
           p.completedVisits.push(b.node); p.visitIndex++; p.status = 'staying'; p.stayStartedAt = s.time; p.readyAt = s.time + (p.stays[p.visitIndex - 1] || 0); p.planBus = null; p.pickupAt = null; p.locked = false;
           log(s, p.name + ' が ' + byId[b.node].name + ' で滞在開始');
@@ -259,6 +259,22 @@
     log(s, p.name + ' の滞在を30分延長（後続便を再計算）');
     return { ok: true, message: p.name + ' の滞在を30分延長しました' };
   }
+  function addReservation(s, request) {
+    if (!request || !byId[request.origin] || !byId[request.destination] || request.origin === request.destination)
+      return { ok: false, message: '異なる出発地と目的地を選んでください' };
+    var ready = Number(request.readyAt), deadline = Number(request.deadline);
+    if (s.time >= 180 || !Number.isInteger(ready) || !Number.isInteger(deadline) || ready < s.time + 1 || deadline > 180 || deadline < ready + legMinutes(request.origin, request.destination))
+      return { ok: false, message: '出発は現在より1分以上先、到着期限は移動時間を含め12時までに設定してください' };
+    var serial = s.people.filter(function(p) { return p.oneWay; }).length + 1;
+    var id = 'extra' + serial;
+    s.people.push({ id: id, name: '追加予約' + serial, kind: 'registered', oneWay: true,
+      origin: request.origin, destination: request.destination, node: request.origin,
+      status: 'pending', readyAt: ready, deadline: deadline, visits: [], stays: [],
+      visitIndex: 0, returning: false, planBus: null, locked: false,
+      completedVisits: [], completedStays: [] });
+    log(s, '追加予約' + serial + ': ' + byId[request.origin].name + ' → ' + byId[request.destination].name + '（片道）を登録');
+    return { ok: true, id: id, message: '追加予約' + serial + ' を登録しました。次の配車から反映します' };
+  }
   function metrics(s) {
     var registered = s.people.filter(function (p) { return p.kind === 'registered' && p.status === 'done'; }).length;
     var walkin = s.people.filter(function (p) { return p.kind === 'walkin' && p.status === 'done'; }).length;
@@ -266,5 +282,5 @@
     s.people.filter(function (p) { return p.kind === 'walkin' && p.status !== 'done'; }).forEach(function (p) { unmet[byId[p.origin].name]++; });
     return { registered: registered, walkin: walkin, distance: Math.round(s.buses.reduce(function (sum, b) { return sum + b.distance; }, 0) * 10) / 10, unmet: unmet };
   }
-  return { nodes: clone(nodes), edges: clone(edges), create: create, step: step, extend: extend, metrics: metrics, forecast: forecast };
+  return { nodes: clone(nodes), edges: clone(edges), create: create, step: step, extend: extend, metrics: metrics, forecast: forecast, addReservation: addReservation };
 }));
